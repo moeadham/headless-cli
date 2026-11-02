@@ -27,6 +27,10 @@ model = "gpt-5.5"
 model = "gpt-5.5"
 reasoning_effort = "medium"
 
+[agents.dsh]
+model = "deepseek-flash" # DeepSeek-V4.1-Flash. Also accepts provider/model.
+# reasoning_effort = "high"
+
 [agents.gemini]
 model = "gemini-3.1-pro-preview"
 # Gemini does not expose a stable per-run reasoning effort flag.

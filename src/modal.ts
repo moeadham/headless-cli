@@ -306,6 +306,14 @@ export async function executeModalAgent(options: ExecuteModalOptions): Promise<E
       const native = masked.length
         ? ["env", ...masked.flatMap((name) => ["-u", name]), "--", command.command, ...command.args]
         : [command.command, ...command.args];
+      for (const file of command.generatedFiles ?? []) {
+        await runRemoteTar(
+          sandbox!,
+          ["sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", file.path],
+          timeoutMs,
+          Buffer.from(file.content),
+        );
+      }
       const setup = initialized ? 'exec runuser -u node -- "$@"' : bootstrapScript;
       initialized = true;
       const runProcess = await sandbox!.exec(

@@ -1,4 +1,4 @@
-export type AgentName = "acp" | "antigravity" | "claude" | "codex" | "cursor" | "gemini" | "opencode" | "pi";
+export type AgentName = "acp" | "antigravity" | "claude" | "codex" | "cursor" | "dsh" | "gemini" | "opencode" | "pi";
 
 export type PromptFileMode = "argument" | "stdin";
 
@@ -46,6 +46,13 @@ export interface BuiltCommand {
   env?: Env;
   stdinFile?: string;
   stdinText?: string;
+  // Small non-secret files the command reads. Executors write them just before launch.
+  generatedFiles?: GeneratedFile[];
+}
+
+export interface GeneratedFile {
+  path: string;
+  content: string;
 }
 
 export interface AgentConfig {

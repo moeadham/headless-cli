@@ -463,6 +463,26 @@ function extractOpencodeUsage(records: JsonRecord[], context: UsageContext): Usa
   });
 }
 
+function extractDshUsage(records: JsonRecord[], context: UsageContext): UsageSummary | undefined {
+  const steps = records.filter((record) => asString(record.type) === "status");
+  const ended = steps.filter((record) => asString(record.phase) === "step_end");
+  const usages = ended.map((record) => asRecord(record.usage)).filter((usage) => Object.keys(usage).length > 0);
+  // DSH omits a step's usage when an attempt reported none, so a partial sum would undercount.
+  if (usages.length === 0 || usages.length !== ended.length) return undefined;
+  const sum = (key: string) => usages.reduce((total, usage) => total + (asOptionalNumber(usage[key]) ?? 0), 0);
+  return summarizeUsage({
+    agent: "dsh",
+    provider: extractProvider(records, context, "dsh"),
+    model: extractModel(records, context),
+    inputTokens: sum("inputTokens"),
+    cacheReadTokens: sum("cacheReadTokens"),
+    cacheWriteTokens: sum("cacheWriteTokens"),
+    outputTokens: sum("outputTokens"),
+    reasoningOutputTokens: sum("reasoningTokens"),
+    useDefaultProvider: context.useDefaultProvider,
+  });
+}
+
 function aggregatePiCost(usages: JsonRecord[]): UsageCostBreakdown | null {
   const costs = usages.map((usage) => {
     const rawCost = asRecord(usage.cost);
@@ -534,6 +554,8 @@ export function extractUsageSummary(
           ? extractCodexUsage(records, context)
           : agent === "cursor"
             ? extractCursorUsage(records, context)
+            : agent === "dsh"
+              ? extractDshUsage(records, context)
             : agent === "gemini"
               ? extractGeminiUsage(records, context)
               : agent === "opencode"

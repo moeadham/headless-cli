@@ -14,8 +14,9 @@ import { delimiter, join } from "node:path";
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
 import { BUILTIN_AGENT_DEFAULTS } from "./config.js";
 import { validateCodexProfileName } from "./codex-profile.js";
+import { dshOverlay } from "./dsh-overlay.js";
 
-const agentOrder: AgentName[] = ["acp", "antigravity", "claude", "codex", "cursor", "gemini", "opencode", "pi"];
+const agentOrder: AgentName[] = ["acp", "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "opencode", "pi"];
 const defaultClaudeModel = BUILTIN_AGENT_DEFAULTS.claude.model;
 const defaultCodexModel = BUILTIN_AGENT_DEFAULTS.codex.model;
 export const DEFAULT_CURSOR_MODEL = BUILTIN_AGENT_DEFAULTS.cursor.model ?? "gpt-5.5";
@@ -471,6 +472,41 @@ export function buildInteractiveOpencodeRun(options: BuildOptions): BuiltCommand
   return commandWithOptionalEnv("opencode", args, opencodeEnv(options.allow));
 }
 
+export function dshCommand(env: Env): string {
+  return env.DSH_BIN || "dsh";
+}
+
+function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
+  const overlay = dshOverlay(options, env);
+  const args = [
+    "--profile",
+    "headless",
+    "--patch",
+    overlay.file.path,
+    "--json",
+    "--permission-mode",
+    options.allow === "read-only" ? "read-only" : "danger-full-access",
+    "--approval-policy",
+    "never",
+  ];
+  if (options.sessionMode === "resume" && options.sessionId) {
+    args.push("--session-id", options.sessionId);
+  }
+  args.push("-");
+
+  return {
+    command: dshCommand(env),
+    args,
+    ...(overlay.env ? { env: overlay.env } : {}),
+    generatedFiles: [overlay.file],
+    ...(options.promptFile ? { stdinFile: options.promptFile } : { stdinText: options.prompt }),
+  };
+}
+
+function buildInteractiveDsh(): BuiltCommand {
+  throw new Error("--tmux is not supported by dsh: it ships no terminal UI; use --session or --coordination session");
+}
+
 function buildPi(options: BuildOptions, env: Env): BuiltCommand {
   const command = env.PI_CODING_AGENT_BIN || "pi";
   const args = options.sessionMode ? ["--mode", "json"] : ["--no-session", "--mode", "json"];
@@ -592,6 +628,15 @@ const harnesses: Record<AgentName, AgentHarness> = {
     buildCommand: buildCursor,
     buildInteractiveCommand: buildInteractiveCursor,
   },
+  dsh: {
+    name: "dsh",
+    promptFileMode: "stdin",
+    configRelDir: ".dsh",
+    workspaceConfigRelDir: ".dsh",
+    seedPaths: [],
+    buildCommand: buildDsh,
+    buildInteractiveCommand: buildInteractiveDsh,
+  },
   gemini: {
     name: "gemini",
     promptFileMode: "stdin",
@@ -691,6 +736,7 @@ const waitTiers: Record<AgentName, WaitTier> = {
   pi: "dir", // --session-dir <unique dir>
   codex: "claim", // no caller-assignable id; claim the new transcript under a launch lock
   acp: "claim", // generic ACP harness has no shared id mechanism
+  dsh: "unsupported", // no terminal UI to wait on
 };
 
 export function waitTierForAgent(name: AgentName): WaitTier {

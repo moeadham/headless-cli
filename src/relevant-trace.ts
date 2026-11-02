@@ -124,6 +124,8 @@ export function compactOversizedTraceLine(agent: AgentName, line: string): strin
   } else if (agent === "opencode") {
     const part = opencodePartProjection(asRecord(record.part));
     if (Object.keys(part).length > 0) projection.part = part;
+  } else if (agent === "dsh") {
+    if (record.reason !== undefined) projection.reason = record.reason;
   } else if (agent === "pi") {
     const message = piMessageProjection(asRecord(record.message));
     if (Object.keys(message).length > 0) projection.message = message;

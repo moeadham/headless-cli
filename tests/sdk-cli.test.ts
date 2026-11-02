@@ -81,6 +81,7 @@ test("SDK capabilities report the supported protocol and command families", asyn
     "claude",
     "codex",
     "cursor",
+    "dsh",
     "gemini",
     "opencode",
     "pi",

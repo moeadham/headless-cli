@@ -5,7 +5,7 @@
 <h1 align="center">Headless CLI</h1>
 
 <p align="center">
-  One CLI entrypoint for running Antigravity, Claude, Codex, Cursor, Gemini, Pi, OpenCode, and ACP-compatible agents in headless mode.
+  One CLI entrypoint for running Antigravity, Claude, Codex, Cursor, DeepSeek Harness, Gemini, Pi, OpenCode, and ACP-compatible agents in headless mode.
 </p>
 
 <p align="center">
@@ -118,7 +118,7 @@ headless attach --all
 headless --check
 ```
 
-When no agent is specified, Headless selects the first installed agent in this order: `codex`, `claude`, `pi`, `opencode`, `gemini`, `antigravity`, `cursor`. ACP-compatible agents are explicit-only: use `headless acp --acp-agent ...` or `headless acp --acp-command ...`.
+When no agent is specified, Headless selects the first installed agent in this order: `codex`, `claude`, `pi`, `opencode`, `gemini`, `antigravity`, `cursor`, `dsh`. ACP-compatible agents are explicit-only: use `headless acp --acp-agent ...` or `headless acp --acp-command ...`.
 
 ## Billing and subscription fallback
 
@@ -258,6 +258,7 @@ Roles include `orchestrator`, `explorer`, `worker`, and `reviewer`. Team specs a
 | [Codex](https://developers.openai.com/codex/cli/reference) | `npm install -g @openai/codex` | `codex` |
 | [Claude Code](https://code.claude.com/docs/en/cli-reference) | `npm install -g @anthropic-ai/claude-code` | `claude` |
 | [Cursor](https://cursor.com/docs/cli/headless) | `curl https://cursor.com/install -fsS \| bash` | `agent`, or set `CURSOR_CLI_BIN=cursor-agent` |
+| [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) | `npm install -g @deepseek-ai/dsh@0.2.2-alpha.2` | `dsh`, or set `DSH_BIN` |
 | [Gemini CLI](https://geminicli.com/docs/cli/cli-reference/) | `npm install -g @google/gemini-cli` | `gemini` |
 | [OpenCode](https://opencode.ai/docs/cli/) | `curl -fsSL https://opencode.ai/install \| bash` or `npm install -g opencode-ai` | `opencode` |
 | [Pi](https://github.com/badlogic/pi-mono/blob/main/packages/coding-agent/docs/rpc.md) | `npm install -g @mariozechner/pi-coding-agent` | `pi`, or set `PI_CODING_AGENT_BIN` |

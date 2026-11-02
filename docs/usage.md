@@ -21,13 +21,14 @@ printf "Review this diff" | headless pi --model claude-opus
 | `claude` | `claude -p ... --output-format stream-json --verbose --dangerously-skip-permissions` |
 | `codex` | `codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check ...` |
 | `cursor` | `agent -p --trust --force --output-format stream-json --model gpt-5.5-medium ...` |
+| `dsh` | `dsh --profile headless --json --permission-mode danger-full-access --approval-policy never -` |
 | `gemini` | `gemini --model gemini-3.1-pro-preview --skip-trust -p ... --output-format stream-json --approval-mode yolo` |
 | `opencode` | `opencode run --format json --model openai/gpt-5.4 --dangerously-skip-permissions ...` |
 | `pi` | `pi --no-session --mode json --provider openai-codex --model gpt-5.5 --tools read,bash,edit,write ...` |
 
-When no agent is specified, Headless selects the first installed agent in this order: `codex`, `claude`, `pi`, `opencode`, `gemini`, `antigravity`, `cursor`. ACP-compatible agents are explicit-only: use `headless acp --acp-agent ...` or `headless acp --acp-command ...`.
+When no agent is specified, Headless selects the first installed agent in this order: `codex`, `claude`, `pi`, `opencode`, `gemini`, `antigravity`, `cursor`, `dsh`. ACP-compatible agents are explicit-only: use `headless acp --acp-agent ...` or `headless acp --acp-command ...`.
 
-When both `--model` and `--profile` are omitted, Headless defaults Codex to `gpt-5.5`. With `--profile`, Codex uses the profile's model unless `--model`, `CODEX_MODEL`, or Headless configuration supplies an explicit override. Headless defaults Claude to `claude-opus-4-6`, Cursor to the `gpt-5.5` family with medium effort, Gemini to `gemini-3.1-pro-preview`, OpenCode to `openai/gpt-5.4`, and Pi to `openai-codex/gpt-5.5`. Antigravity has no built-in Headless model default; pass one of the names reported by `agy models` with `--model` when you want a per-run override.
+When both `--model` and `--profile` are omitted, Headless defaults Codex to `gpt-5.5`. With `--profile`, Codex uses the profile's model unless `--model`, `CODEX_MODEL`, or Headless configuration supplies an explicit override. Headless defaults Claude to `claude-opus-4-6`, Cursor to the `gpt-5.5` family with medium effort, Gemini to `gemini-3.1-pro-preview`, DSH to `deepseek-flash`, OpenCode to `openai/gpt-5.4`, and Pi to `openai-codex/gpt-5.5`. Antigravity has no built-in Headless model default; pass one of the names reported by `agy models` with `--model` when you want a per-run override.
 
 ## ACP Agents
 
@@ -58,6 +59,14 @@ Environment equivalents are also supported: `HEADLESS_ACP_AGENT`, `HEADLESS_ACP_
 ## Permissions and Reasoning
 
 By default, Headless uses each agent's native auto-approve/bypass mode. Pass `--allow read-only` to use each agent's read-only or planning mode where available. Pass `--allow yolo` to request full tool access explicitly.
+
+### DeepSeek Harness
+
+The `dsh` backend needs `@deepseek-ai/dsh` `0.2.2-alpha.2` or newer and `DEEPSEEK_API_KEY` in the environment or a `.env` file. DSH's headless profile ignores credentials saved through its GUI. Set `DSH_BIN` to use another binary.
+
+Headless defaults DSH to `deepseek-flash`, the API id for DeepSeek-V4.1-Flash (shown as `1017` in older DSH UIs). DSH has no model flags, so `--model` and `--reasoning-effort` are applied through a generated `--patch` overlay under `~/.headless/dsh`. A bare model uses the `deepseek-official` provider; use `provider/model` for another route. `--allow read-only` selects DSH's `read-only` preset; otherwise Headless selects `danger-full-access`. Approval prompts are always disabled. `--session` resumes a DSH session only from the working directory that created it. `--tmux` and `--fast` are not supported. DSH validates effort per model: `deepseek-v4-pro` accepts `high` but rejects `xhigh`, and the run fails with DSH's error.
+
+Headless disables DSH's default session-log upload to DeepSeek and sets `DSH_TELEMETRY_DISABLED=1`. Set `HEADLESS_DSH_UPLOAD=1` to keep DSH's own defaults. DSH is unaudited developer-preview software that warns of breaking changes; its safety notice recommends a disposable environment, so prefer `--docker` for real work.
 
 Pass `--reasoning-effort low|medium|high|xhigh` or `--effort low|medium|high|xhigh` to request a normalized reasoning effort for agents with native support. Claude receives `--effort`, Codex receives `model_reasoning_effort`, Cursor combines the model family and effort into Cursor's model variant string, OpenCode receives `--variant` in one-shot mode, and Pi receives `--thinking`. Docker and Modal inherit the same one-shot command. In tmux mode, Claude, Codex, Cursor, and Pi receive their interactive effort flags. Antigravity, Gemini, and OpenCode tmux currently accept the option, leave the command unchanged, and print a warning.
 
@@ -237,7 +246,7 @@ mkdir -p ~/.headless
 cp config.toml.example ~/.headless/config.toml
 ```
 
-Supported general keys under `[general]` are `timeout_seconds`, `default_agent`, `coordination`, `run_status_interval_ms`, and `list_waiting_after_ms`. Supported agent sections are `[agents.antigravity]`, `[agents.claude]`, `[agents.codex]`, `[agents.cursor]`, `[agents.gemini]`, `[agents.opencode]`, and `[agents.pi]`; supported agent keys are `model` and `reasoning_effort`. Antigravity passes `model` through to `agy --model`, and accepts `reasoning_effort` for config compatibility but prints an unsupported warning during execution. ACP backend selection is controlled by `--acp-agent`, `--acp-command`, and the ACP environment variables rather than model defaults.
+Supported general keys under `[general]` are `timeout_seconds`, `default_agent`, `coordination`, `run_status_interval_ms`, and `list_waiting_after_ms`. Supported agent sections are `[agents.antigravity]`, `[agents.claude]`, `[agents.codex]`, `[agents.cursor]`, `[agents.dsh]`, `[agents.gemini]`, `[agents.opencode]`, and `[agents.pi]`; supported agent keys are `model` and `reasoning_effort`. Antigravity passes `model` through to `agy --model`, and accepts `reasoning_effort` for config compatibility but prints an unsupported warning during execution. ACP backend selection is controlled by `--acp-agent`, `--acp-command`, and the ACP environment variables rather than model defaults.
 
 Precedence:
 

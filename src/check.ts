@@ -3,7 +3,7 @@ import { accessSync, constants, statSync } from "node:fs";
 import { delimiter, join } from "node:path";
 
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
-import { claudeCommand, claudeOauthExists, listAgents } from "./agents.js";
+import { claudeCommand, claudeOauthExists, dshCommand, listAgents } from "./agents.js";
 import {
   BUILTIN_AGENT_DEFAULTS,
   loadHeadlessConfig,
@@ -56,6 +56,9 @@ export function commandForAgent(agent: AgentName, env: Env): string {
   }
   if (agent === "claude") {
     return claudeCommand(env);
+  }
+  if (agent === "dsh") {
+    return dshCommand(env);
   }
   if (agent === "pi") {
     return env.PI_CODING_AGENT_BIN || "pi";
@@ -111,6 +114,7 @@ const apiEnvNamesByAgent: Record<AgentName, string[]> = {
   claude: ["ANTHROPIC_API_KEY"],
   codex: ["CODEX_API_KEY", "OPENAI_API_KEY"],
   cursor: ["CURSOR_API_KEY"],
+  dsh: ["DEEPSEEK_API_KEY"],
   gemini: ["GEMINI_API_KEY", "GOOGLE_API_KEY", "GOOGLE_APPLICATION_CREDENTIALS"],
   opencode: commonProviderApiEnvNames,
   pi: ["PI_CODING_AGENT_API_KEY", ...commonProviderApiEnvNames],
@@ -122,6 +126,7 @@ const oauthEnvNamesByAgent: Record<AgentName, string[]> = {
   claude: ["CLAUDE_CODE_OAUTH_TOKEN"],
   codex: [],
   cursor: [],
+  dsh: [],
   gemini: [],
   opencode: [],
   pi: [],
@@ -133,6 +138,7 @@ const oauthPathsByAgent: Record<AgentName, string[]> = {
   claude: [".claude/.credentials.json", ".claude/auth.json"],
   codex: [".codex/auth.json"],
   cursor: [".cursor/cli-config.json"],
+  dsh: [],
   gemini: [".gemini/google_accounts.json"],
   opencode: [".config/opencode"],
   pi: [".pi/agent/auth.json"],
@@ -256,6 +262,16 @@ function normalizeVersion(output: string): string {
   return numeric[numeric.length - 1] ?? "unknown";
 }
 
+// `--permission-mode` and `--approval-policy` first shipped in the 0.2.2 line.
+function withDshVersionWarning(agent: AgentName, version: string): string {
+  if (agent !== "dsh") return version;
+  const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
+  if (!parts) return version;
+  const [major = 0, minor = 0, patch = 0] = parts;
+  const supported = major > 0 || minor > 2 || (minor === 2 && patch >= 2);
+  return supported ? version : `${version} (needs >=0.2.2-alpha.2)`;
+}
+
 export async function checkAgents(env: Env, config: HeadlessConfig = loadHeadlessConfig(env)): Promise<AgentCheck[]> {
   return await Promise.all(
     listAgents().map(async (agent) => {
@@ -267,7 +283,7 @@ export async function checkAgents(env: Env, config: HeadlessConfig = loadHeadles
         command,
         available: executable !== undefined,
         auth: detectAuth(agent, env, defaults),
-        version: executable ? await captureVersion(executable, env) : "-",
+        version: executable ? withDshVersionWarning(agent, await captureVersion(executable, env)) : "-",
         model: defaults.model ?? "-",
         reasoningEffort: defaults.reasoningEffort ?? "-",
       };
