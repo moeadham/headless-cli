@@ -348,9 +348,6 @@ export function buildDockerAgentCommand(options: DockerAgentCommandOptions): Bui
   }
   args.push(...agentConfigMountArgs(options.agent, options.env, options.profile));
   args.push(...credentialMountArgs(options.env, dockerEnvEntries, workDir));
-  for (const file of options.command.generatedFiles ?? []) {
-    args.push("--volume", `${file.path}:${file.path}:ro`);
-  }
   args.push(...dockerEnvArgs(dockerEnvEntries));
   args.push(...options.dockerArgs);
   const maskedEnvNames = Object.entries(options.command.env ?? {})
@@ -366,9 +363,6 @@ export function buildDockerAgentCommand(options: DockerAgentCommandOptions): Bui
   );
 
   const dockerCommand: BuiltCommand = { command: "docker", args };
-  if (options.command.generatedFiles) {
-    dockerCommand.generatedFiles = options.command.generatedFiles;
-  }
   if (options.command.env) {
     dockerCommand.env = options.command.env;
   }

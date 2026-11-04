@@ -262,16 +262,6 @@ function normalizeVersion(output: string): string {
   return numeric[numeric.length - 1] ?? "unknown";
 }
 
-// `--permission-mode` and `--approval-policy` first shipped in the 0.2.2 line.
-function withDshVersionWarning(agent: AgentName, version: string): string {
-  if (agent !== "dsh") return version;
-  const parts = version.match(/^(\d+)\.(\d+)\.(\d+)/)?.slice(1).map(Number);
-  if (!parts) return version;
-  const [major = 0, minor = 0, patch = 0] = parts;
-  const supported = major > 0 || minor > 2 || (minor === 2 && patch >= 2);
-  return supported ? version : `${version} (needs >=0.2.2-alpha.2)`;
-}
-
 export async function checkAgents(env: Env, config: HeadlessConfig = loadHeadlessConfig(env)): Promise<AgentCheck[]> {
   return await Promise.all(
     listAgents().map(async (agent) => {
@@ -283,7 +273,7 @@ export async function checkAgents(env: Env, config: HeadlessConfig = loadHeadles
         command,
         available: executable !== undefined,
         auth: detectAuth(agent, env, defaults),
-        version: executable ? withDshVersionWarning(agent, await captureVersion(executable, env)) : "-",
+        version: executable ? await captureVersion(executable, env) : "-",
         model: defaults.model ?? "-",
         reasoningEffort: defaults.reasoningEffort ?? "-",
       };

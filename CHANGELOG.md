@@ -2,7 +2,7 @@
 
 ## TBD
 
-- Added a first-class `dsh` backend for DeepSeek Harness (`>=0.2.2-alpha.2`) with one-shot runs, native sessions, model and effort selection, normalized usage, `--check`, Docker, Modal, and run coordination. Tmux is unsupported because dsh ships no terminal UI. Session-log upload and telemetry are off by default; set `HEADLESS_DSH_UPLOAD=1` to keep DSH defaults.
+- Added a first-class `dsh` backend for DeepSeek Harness (`>=0.2.2-alpha.2`) with one-shot runs, native sessions, model and effort selection, normalized usage, Docker, Modal, and run coordination. Tmux is unsupported because dsh ships no terminal UI. Session-log upload and telemetry are off by default; set `HEADLESS_DSH_UPLOAD=1` to keep DSH defaults.
 - Added automatic bounded retries for native Codex model-capacity failures in local, Docker, and Modal runs, preserving sessions, billing policy, cancellation, deadlines, and per-attempt usage. Set `HEADLESS_CAPACITY_RETRIES=0` to disable.
 - Fixed run coordination to recover stale run and node locks after owner crashes, retain async ownership for the full detached process tree, and handle Windows process probing and state replacement safely (#28).
 

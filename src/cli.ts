@@ -19,13 +19,13 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants as osConstants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { dshModelSpec, writeGeneratedFiles } from "./dsh-overlay.js";
 import { PiCompletionObserver } from "./pi-completion.js";
 
 import {
   buildAgentCommand,
   buildInteractiveOpencodeRun,
   buildInteractiveAgentCommand,
+  DEFAULT_DSH_MODEL,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_OPENCODE_MODEL,
   DEFAULT_PI_MODEL,
@@ -79,7 +79,6 @@ import {
 } from "./modal.js";
 import {
   extractAgentError,
-  extractDshFailure,
   extractFinalMessage,
   extractNativeSessionId,
   extractUsageSummary,
@@ -1167,7 +1166,7 @@ function usageContext(
     return { provider: "google", model: defaults.model ?? DEFAULT_GEMINI_MODEL };
   }
   if (agent === "dsh") {
-    return dshModelSpec(defaults.model);
+    return { provider: "deepseek-official", model: defaults.model ?? DEFAULT_DSH_MODEL };
   }
   if (agent === "pi") {
     return piModelSpec(defaults.model, env);
@@ -1772,7 +1771,6 @@ async function executeCommand(
   stderr: (text: string) => void,
   options: ExecuteCommandOptions,
 ): Promise<ExecuteResult> {
-  writeGeneratedFiles(command);
   let stdinFd: number | undefined;
   const stdio: ["ignore" | "pipe" | number, "pipe", "pipe"] = [
     command.stdinText !== undefined ? "pipe" : "ignore",
@@ -3381,9 +3379,6 @@ async function executeStoredNode(
     stderr: runStderrLogger(env, node.runId, node.nodeId),
     timeoutSeconds: config.general.timeoutSeconds,
   });
-  if (node.agent === "dsh" && result.code === 0 && extractDshFailure(result.usageTrace || result.stdout)) {
-    result.code = 1;
-  }
   if (result.code === 0 && sessionPlan) {
     await persistSessionPlan(node.agent, sessionPlan, result.stdout, node.workDir, env);
   }
@@ -4732,13 +4727,6 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
           : undefined;
       const piFinalMessage = piOutcome?.status === "success" ? piOutcome.finalMessage : undefined;
       if (piError && result.code === 0) result = { ...result, code: 1 };
-      if (parsed.agent === "dsh" && result.code === 0) {
-        const dshFailure = extractDshFailure(result.usageTrace || commandTrace);
-        if (dshFailure) {
-          displayStderr(`headless: ${dshFailure}\n`);
-          result = { ...result, code: 1 };
-        }
-      }
       billingHomeCompleted = result.code === 0;
       const usageCommandTrace = result.stdout || result.usageTrace || result.finalMessageTrace || "";
       const usageTrace = antigravityUsageTrace

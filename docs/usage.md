@@ -21,7 +21,7 @@ printf "Review this diff" | headless pi --model claude-opus
 | `claude` | `claude -p ... --output-format stream-json --verbose --dangerously-skip-permissions` |
 | `codex` | `codex exec --json --dangerously-bypass-approvals-and-sandbox --skip-git-repo-check ...` |
 | `cursor` | `agent -p --trust --force --output-format stream-json --model gpt-5.5-medium ...` |
-| `dsh` | `dsh --profile headless --json --permission-mode danger-full-access --approval-policy never -` |
+| `dsh` | `dsh --profile headless --patch /dev/stdin --json --permission-mode danger-full-access --approval-policy never -- <prompt>` |
 | `gemini` | `gemini --model gemini-3.1-pro-preview --skip-trust -p ... --output-format stream-json --approval-mode yolo` |
 | `opencode` | `opencode run --format json --model openai/gpt-5.4 --dangerously-skip-permissions ...` |
 | `pi` | `pi --no-session --mode json --provider openai-codex --model gpt-5.5 --tools read,bash,edit,write ...` |
@@ -64,7 +64,7 @@ By default, Headless uses each agent's native auto-approve/bypass mode. Pass `--
 
 The `dsh` backend needs `@deepseek-ai/dsh` `0.2.2-alpha.2` or newer and `DEEPSEEK_API_KEY` in the environment or a `.env` file. DSH's headless profile ignores credentials saved through its GUI. Set `DSH_BIN` to use another binary.
 
-Headless defaults DSH to `deepseek-flash`, the API id for DeepSeek-V4.1-Flash (shown as `1017` in older DSH UIs). DSH has no model flags, so `--model` and `--reasoning-effort` are applied through a generated `--patch` overlay under `~/.headless/dsh`. A bare model uses the `deepseek-official` provider; use `provider/model` for another route. `--allow read-only` selects DSH's `read-only` preset; otherwise Headless selects `danger-full-access`. Approval prompts are always disabled. `--session` resumes a DSH session only from the working directory that created it. `--tmux` and `--fast` are not supported. DSH validates effort per model: `deepseek-v4-pro` accepts `high` but rejects `xhigh`, and the run fails with DSH's error.
+Headless defaults DSH to `deepseek-flash`, the API id for DeepSeek-V4.1-Flash (shown as `1017` in older DSH UIs). DSH has no model flags, so Headless sends `--model` and `--reasoning-effort` as a `--patch` overlay on stdin, with the `deepseek-official` provider, and passes the prompt as an argument. `--allow read-only` selects DSH's `read-only` preset; otherwise Headless selects `danger-full-access`. Approval prompts are always disabled. `--session` resumes a DSH session only from the working directory that created it. `--tmux` and `--fast` are not supported. DSH validates effort per model: `deepseek-v4-pro` accepts `high` but rejects `xhigh`, and the run fails with DSH's error.
 
 Headless disables DSH's default session-log upload to DeepSeek and sets `DSH_TELEMETRY_DISABLED=1`. Set `HEADLESS_DSH_UPLOAD=1` to keep DSH's own defaults. DSH is unaudited developer-preview software that warns of breaking changes; its safety notice recommends a disposable environment, so prefer `--docker` for real work.
 

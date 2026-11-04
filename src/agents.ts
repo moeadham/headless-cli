@@ -14,12 +14,12 @@ import { delimiter, join } from "node:path";
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
 import { BUILTIN_AGENT_DEFAULTS } from "./config.js";
 import { validateCodexProfileName } from "./codex-profile.js";
-import { dshOverlay } from "./dsh-overlay.js";
 
 const agentOrder: AgentName[] = ["acp", "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "opencode", "pi"];
 const defaultClaudeModel = BUILTIN_AGENT_DEFAULTS.claude.model;
 const defaultCodexModel = BUILTIN_AGENT_DEFAULTS.codex.model;
 export const DEFAULT_CURSOR_MODEL = BUILTIN_AGENT_DEFAULTS.cursor.model ?? "gpt-5.5";
+export const DEFAULT_DSH_MODEL = BUILTIN_AGENT_DEFAULTS.dsh.model ?? "deepseek-flash";
 export const DEFAULT_GEMINI_MODEL = BUILTIN_AGENT_DEFAULTS.gemini.model ?? "gemini-3.1-pro-preview";
 export const DEFAULT_OPENCODE_MODEL = BUILTIN_AGENT_DEFAULTS.opencode.model ?? "openai/gpt-5.4";
 export const DEFAULT_PI_MODEL = BUILTIN_AGENT_DEFAULTS.pi.model ?? "openai-codex/gpt-5.5";
@@ -476,13 +476,26 @@ export function dshCommand(env: Env): string {
   return env.DSH_BIN || "dsh";
 }
 
+// dsh has no model flags, so routing travels as a `--patch` overlay on stdin.
+// A patch row replaces its config, so the provider is always restated.
+function dshPatch(options: BuildOptions, env: Env): string {
+  const lines = [
+    "- id: agent-default-model",
+    "  config:",
+    '    provider: "deepseek-official"',
+    `    model: ${JSON.stringify(options.model ?? DEFAULT_DSH_MODEL)}`,
+  ];
+  if (options.reasoningEffort) lines.push(`    reasoningEffort: ${JSON.stringify(options.reasoningEffort)}`);
+  if (env.HEADLESS_DSH_UPLOAD !== "1") lines.push("- id: session-log-deepseek", "  disabled: true");
+  return `${lines.join("\n")}\n`;
+}
+
 function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
-  const overlay = dshOverlay(options, env);
   const args = [
     "--profile",
     "headless",
     "--patch",
-    overlay.file.path,
+    "/dev/stdin",
     "--json",
     "--permission-mode",
     options.allow === "read-only" ? "read-only" : "danger-full-access",
@@ -492,15 +505,9 @@ function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
   if (options.sessionMode === "resume" && options.sessionId) {
     args.push("--session-id", options.sessionId);
   }
-  args.push("-");
-
-  return {
-    command: dshCommand(env),
-    args,
-    ...(overlay.env ? { env: overlay.env } : {}),
-    generatedFiles: [overlay.file],
-    ...(options.promptFile ? { stdinFile: options.promptFile } : { stdinText: options.prompt }),
-  };
+  args.push("--", options.prompt);
+  const commandEnv = env.HEADLESS_DSH_UPLOAD === "1" ? undefined : { DSH_TELEMETRY_DISABLED: "1" };
+  return { ...commandWithOptionalEnv(dshCommand(env), args, commandEnv), stdinText: dshPatch(options, env) };
 }
 
 function buildInteractiveDsh(): BuiltCommand {
@@ -630,7 +637,7 @@ const harnesses: Record<AgentName, AgentHarness> = {
   },
   dsh: {
     name: "dsh",
-    promptFileMode: "stdin",
+    promptFileMode: "argument",
     configRelDir: ".dsh",
     workspaceConfigRelDir: ".dsh",
     seedPaths: [],

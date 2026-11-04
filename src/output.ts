@@ -282,7 +282,7 @@ function dshEvents(stdout: string, type: string): JsonRecord[] {
   return parseJsonValues(stdout).flatMap(flattenRecords).filter((record) => asString(record.type) === type);
 }
 
-export function extractDshFailure(stdout: string): string {
+function extractDshFailure(stdout: string): string {
   const error = dshEvents(stdout, "error").at(-1);
   if (error) return `dsh error: ${asString(error.message).trim() || "native invocation failed"}`;
   const final = dshEvents(stdout, "final").at(-1);
