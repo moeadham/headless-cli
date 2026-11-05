@@ -6,6 +6,7 @@ import test from "node:test";
 import { buildAgentCommand, buildInteractiveAgentCommand, waitTierForAgent } from "../src/agents.ts";
 import { runCli } from "../src/cli.ts";
 import { buildDockerAgentCommand } from "../src/docker.ts";
+import { sandboxGeneratedFiles } from "../src/generated-files.ts";
 import { compactOversizedTraceLine } from "../src/relevant-trace.ts";
 import { extractAgentError, extractFinalMessage, extractNativeSessionId, extractUsageSummary } from "../src/output.ts";
 
@@ -20,35 +21,38 @@ const trace = [
   line({ type: "final", sessionId: "session-1", reason: { kind: "completed" }, text: "all done" }),
 ].join("\n");
 
-test("builds a one-shot dsh command with the patch on stdin and the task as an argument", () => {
-  const built = buildAgentCommand("dsh", { prompt: "-hello", allow: "read-only" }, { DSH_BIN: "/opt/dsh" });
+test("builds a one-shot dsh command with a patch file and the task on stdin", () => {
+  const built = buildAgentCommand("dsh", { prompt: "hello", allow: "read-only" }, { HOME: "/home/u", DSH_BIN: "/opt/dsh" });
+  const patch = built.generatedFiles?.[0];
   assert.equal(built.command, "/opt/dsh");
+  assert.match(patch?.path ?? "", /^\/home\/u\/\.headless\/dsh\/overlay-[0-9a-f]{16}\.yml$/);
   assert.deepEqual(built.args, [
-    "--profile", "headless", "--patch", "/dev/stdin", "--json",
-    "--permission-mode", "read-only", "--approval-policy", "never", "--", "-hello",
+    "--profile", "headless", "--patch", patch?.path, "--json",
+    "--permission-mode", "read-only", "--approval-policy", "never", "-",
   ]);
+  assert.equal(built.stdinText, "hello");
   assert.equal(built.env?.DSH_TELEMETRY_DISABLED, "1");
-  assert.equal(built.stdinText, [
+  assert.equal(patch?.content, [
     "- id: agent-default-model", "  config:", '    provider: "deepseek-official"', '    model: "deepseek-flash"',
     "- id: session-log-deepseek", "  disabled: true", "",
   ].join("\n"));
 });
 
 test("dsh yolo is the default and resume passes the native session id", () => {
-  const built = buildAgentCommand("dsh", { prompt: "x", sessionMode: "resume", sessionId: "session-1" }, {});
-  assert.deepEqual(built.args.slice(5), ["--permission-mode", "danger-full-access", "--approval-policy", "never", "--session-id", "session-1", "--", "x"]);
-  const fresh = buildAgentCommand("dsh", { prompt: "x", sessionMode: "new", sessionId: "ignored" }, {});
+  const built = buildAgentCommand("dsh", { prompt: "x", sessionMode: "resume", sessionId: "session-1" }, { HOME: "/h" });
+  assert.deepEqual(built.args.slice(5), ["--permission-mode", "danger-full-access", "--approval-policy", "never", "--session-id", "session-1", "-"]);
+  const fresh = buildAgentCommand("dsh", { prompt: "x", sessionMode: "new", sessionId: "ignored" }, { HOME: "/h" });
   assert.equal(fresh.args.includes("--session-id"), false);
 });
 
 test("dsh patch carries model and effort", () => {
-  const built = buildAgentCommand("dsh", { prompt: "x", model: "deepseek-v4-pro", reasoningEffort: "high" }, {});
-  assert.match(built.stdinText ?? "", /model: "deepseek-v4-pro"\n {4}reasoningEffort: "high"\n/);
+  const built = buildAgentCommand("dsh", { prompt: "x", model: "deepseek-v4-pro", reasoningEffort: "high" }, { HOME: "/h" });
+  assert.match(built.generatedFiles?.[0]?.content ?? "", /model: "deepseek-v4-pro"\n {4}reasoningEffort: "high"\n/);
 });
 
 test("HEADLESS_DSH_UPLOAD keeps DSH upload defaults", () => {
-  const built = buildAgentCommand("dsh", { prompt: "x" }, { HEADLESS_DSH_UPLOAD: "1" });
-  assert.doesNotMatch(built.stdinText ?? "", /session-log-deepseek/);
+  const built = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/h", HEADLESS_DSH_UPLOAD: "1" });
+  assert.doesNotMatch(built.generatedFiles?.[0]?.content ?? "", /session-log-deepseek/);
   assert.equal(built.env, undefined);
 });
 
@@ -86,15 +90,28 @@ test("oversized dsh final keeps its outcome", () => {
   assert.equal(extractAgentError("dsh", compactOversizedTraceLine("dsh", big)), "");
 });
 
-test("Docker passes the dsh patch on stdin and forwards the DeepSeek key", () => {
-  const command = buildAgentCommand("dsh", { prompt: "x" }, {});
+test("sandboxes see generated files under /tmp, not the host home", () => {
+  const command = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/root" });
+  const hostPath = command.generatedFiles?.[0]?.path ?? "";
+  const sandbox = sandboxGeneratedFiles(command);
+  const path = sandbox.files[0]?.path ?? "";
+  assert.match(path, /^\/tmp\/headless-generated\/overlay-[0-9a-f]{16}\.yml$/);
+  assert.equal(sandbox.files[0]?.hostPath, hostPath);
+  assert.equal(sandbox.args[sandbox.args.indexOf("--patch") + 1], path);
+  assert.equal(sandbox.args.includes(hostPath), false);
+});
+
+test("Docker mounts the dsh patch at the sandbox path", () => {
+  const command = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/root" });
   const docker = buildDockerAgentCommand({
     agent: "dsh", command, dockerArgs: [], dockerEnv: [], env: { HOME: "/h", DEEPSEEK_API_KEY: "k" },
     image: "image", workDir: tmpdir(),
   });
-  assert.ok(docker.args.includes("--interactive"));
+  const { files: [file] } = sandboxGeneratedFiles(command);
+  assert.ok(docker.args.includes(`${file?.hostPath}:${file?.path}:ro`));
+  assert.equal(docker.args[docker.args.indexOf("--patch") + 1], file?.path);
+  assert.deepEqual(docker.generatedFiles, command.generatedFiles);
   assert.ok(docker.args.includes("DEEPSEEK_API_KEY"));
-  assert.equal(docker.stdinText, command.stdinText);
 });
 
 function fixture(script: string) {
@@ -102,8 +119,10 @@ function fixture(script: string) {
   writeFileSync(join(home, "dsh"), `#!/usr/bin/env node
 const fs = require('node:fs');
 const args = process.argv.slice(2);
-const patch = fs.readFileSync(0, 'utf8');
-fs.writeFileSync(process.env.HOME + '/call.json', JSON.stringify({ args, patch, task: args.at(-1), telemetry: process.env.DSH_TELEMETRY_DISABLED }));
+const patchPath = args[args.indexOf('--patch') + 1];
+const patch = fs.readFileSync(patchPath, 'utf8');
+const task = fs.readFileSync(0, 'utf8');
+fs.writeFileSync(process.env.HOME + '/call.json', JSON.stringify({ args, patch, patchMode: fs.statSync(patchPath).mode & 0o777, task, telemetry: process.env.DSH_TELEMETRY_DISABLED }));
 ${script}
 `, { mode: 0o755 });
   const out: string[] = [];
@@ -118,7 +137,7 @@ ${script}
 
 const success = `console.log(${JSON.stringify(trace)});`;
 
-test("CLI runs dsh end to end with the patch on stdin", async () => {
+test("CLI runs dsh end to end and writes the patch file", async () => {
   const run = fixture(success);
   const code = await runCli(["dsh", "--prompt", "hi", "--model", "deepseek-v4-pro"], { env: run.env, ...run.io });
   assert.equal(code, 0, run.err.join(""));
@@ -127,6 +146,7 @@ test("CLI runs dsh end to end with the patch on stdin", async () => {
   assert.equal(call.task, "hi");
   assert.equal(call.telemetry, "1");
   assert.match(call.patch, /model: "deepseek-v4-pro"/);
+  assert.equal(call.patchMode, 0o644);
 });
 
 test("CLI reports dsh usage and stores the native session for resume", async () => {
@@ -150,7 +170,7 @@ test("CLI passes a successful dsh --json stream through", async () => {
   assert.match(run.out.join(""), /"type":"final"/);
 });
 
-test("CLI reads a dsh prompt file into the task argument", async () => {
+test("CLI streams a dsh prompt file on stdin", async () => {
   const run = fixture(success);
   const promptFile = join(run.home, "task.md");
   writeFileSync(promptFile, "from file");
@@ -162,7 +182,7 @@ test("CLI defaults dsh to deepseek-flash and reports the route in usage", async 
   const run = fixture(success);
   assert.equal(await runCli(["dsh", "--prompt", "hi", "--usage"], { env: run.env, ...run.io }), 0, run.err.join(""));
   const call = run.call();
-  const content = call.patch;
+  const content: string = call.patch;
   assert.match(content, /provider: "deepseek-official"\n {4}model: "deepseek-flash"/);
   assert.match(content, /session-log-deepseek/);
   assert.match(run.out.join(""), /"provider":"deepseek-official","model":"deepseek-flash"/);

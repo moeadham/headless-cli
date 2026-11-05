@@ -23,6 +23,7 @@ import { gunzipSync } from "node:zlib";
 import { getAgentConfig } from "./agents.js";
 import { codexProfileSeedFiles, readCodexBaseFiles } from "./codex-profile.js";
 import { collectForwardedEnvEntries } from "./env.js";
+import { sandboxGeneratedFiles } from "./generated-files.js";
 import type { AgentName, BuiltCommand, Env } from "./types.js";
 
 export const DEFAULT_MODAL_IMAGE =
@@ -303,9 +304,18 @@ export async function executeModalAgent(options: ExecuteModalOptions): Promise<E
       }
       const masked = Object.entries(overrides).filter(([, value]) => value === undefined).map(([name]) => name);
       for (const name of masked) delete attemptEnvironment[name];
+      const generated = sandboxGeneratedFiles(command);
+      for (const file of generated.files) {
+        await runRemoteTar(
+          sandbox!,
+          ["sh", "-c", 'mkdir -p "$(dirname "$1")" && cat > "$1"', "sh", file.path],
+          timeoutMs,
+          Buffer.from(file.content),
+        );
+      }
       const native = masked.length
-        ? ["env", ...masked.flatMap((name) => ["-u", name]), "--", command.command, ...command.args]
-        : [command.command, ...command.args];
+        ? ["env", ...masked.flatMap((name) => ["-u", name]), "--", command.command, ...generated.args]
+        : [command.command, ...generated.args];
       const setup = initialized ? 'exec runuser -u node -- "$@"' : bootstrapScript;
       initialized = true;
       const runProcess = await sandbox!.exec(

@@ -6,10 +6,13 @@ import type {
   BuildOptions,
   BuiltCommand,
   Env,
+  GeneratedFile,
   ReasoningEffort,
   WaitTier,
 } from "./types.js";
+import { createHash } from "node:crypto";
 import { accessSync, constants } from "node:fs";
+import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
 import { BUILTIN_AGENT_DEFAULTS } from "./config.js";
@@ -476,7 +479,7 @@ export function dshCommand(env: Env): string {
   return env.DSH_BIN || "dsh";
 }
 
-// dsh has no model flags, so routing travels as a `--patch` overlay on stdin.
+// dsh has no model flags, so routing travels as a `--patch` overlay file.
 // A patch row replaces its config, so the provider is always restated.
 function dshPatch(options: BuildOptions, env: Env): string {
   const lines = [
@@ -490,12 +493,21 @@ function dshPatch(options: BuildOptions, env: Env): string {
   return `${lines.join("\n")}\n`;
 }
 
+// Content-addressed so concurrent and detached runs share one file with no cleanup.
+function dshPatchFile(options: BuildOptions, env: Env): GeneratedFile {
+  const content = dshPatch(options, env);
+  const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+  const root = env.HOME ? join(env.HOME, ".headless", "dsh") : join(tmpdir(), "headless-dsh");
+  return { path: join(root, `overlay-${hash}.yml`), content };
+}
+
 function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
+  const patch = dshPatchFile(options, env);
   const args = [
     "--profile",
     "headless",
     "--patch",
-    "/dev/stdin",
+    patch.path,
     "--json",
     "--permission-mode",
     options.allow === "read-only" ? "read-only" : "danger-full-access",
@@ -505,9 +517,13 @@ function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
   if (options.sessionMode === "resume" && options.sessionId) {
     args.push("--session-id", options.sessionId);
   }
-  args.push("--", options.prompt);
+  args.push("-");
   const commandEnv = env.HEADLESS_DSH_UPLOAD === "1" ? undefined : { DSH_TELEMETRY_DISABLED: "1" };
-  return { ...commandWithOptionalEnv(dshCommand(env), args, commandEnv), stdinText: dshPatch(options, env) };
+  return {
+    ...commandWithOptionalEnv(dshCommand(env), args, commandEnv),
+    generatedFiles: [patch],
+    ...(options.promptFile ? { stdinFile: options.promptFile } : { stdinText: options.prompt }),
+  };
 }
 
 function buildInteractiveDsh(): BuiltCommand {
@@ -637,7 +653,7 @@ const harnesses: Record<AgentName, AgentHarness> = {
   },
   dsh: {
     name: "dsh",
-    promptFileMode: "argument",
+    promptFileMode: "stdin",
     configRelDir: ".dsh",
     workspaceConfigRelDir: ".dsh",
     seedPaths: [],

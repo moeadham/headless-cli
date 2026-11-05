@@ -19,6 +19,7 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants as osConstants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
+import { writeGeneratedFiles } from "./generated-files.js";
 import { PiCompletionObserver } from "./pi-completion.js";
 
 import {
@@ -1771,6 +1772,7 @@ async function executeCommand(
   stderr: (text: string) => void,
   options: ExecuteCommandOptions,
 ): Promise<ExecuteResult> {
+  writeGeneratedFiles(command);
   let stdinFd: number | undefined;
   const stdio: ["ignore" | "pipe" | number, "pipe", "pipe"] = [
     command.stdinText !== undefined ? "pipe" : "ignore",
