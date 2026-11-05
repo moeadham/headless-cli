@@ -56,7 +56,7 @@ function processIsAlive(pid: number): boolean {
 }
 
 test("lists all supported agents", () => {
-  assert.deepEqual(listAgents(), ["acp", "antigravity", "claude", "codex", "cursor", "gemini", "opencode", "pi"]);
+  assert.deepEqual(listAgents(), ["acp", "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "opencode", "pi"]);
 });
 
 test("default Docker image reference is accepted by Docker", () => {

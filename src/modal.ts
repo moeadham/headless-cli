@@ -16,11 +16,11 @@ import {
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
-import { dirname, join, relative, resolve } from "node:path";
+import { basename, dirname, join, relative, resolve } from "node:path";
 import { spawn, spawnSync } from "node:child_process";
 import { gunzipSync } from "node:zlib";
 
-import { getAgentConfig } from "./agents.js";
+import { dshPatchPath, getAgentConfig } from "./agents.js";
 import { codexProfileSeedFiles, readCodexBaseFiles } from "./codex-profile.js";
 import { collectForwardedEnvEntries } from "./env.js";
 import type { AgentName, BuiltCommand, Env } from "./types.js";
@@ -35,6 +35,7 @@ export const DEFAULT_MODAL_TIMEOUT_SECONDS = 3600;
 const remoteWorkDir = "/workspace";
 const remoteHome = "/home/node";
 const remoteHostHome = "/tmp/headless-host-home";
+const dshRemotePatchDir = ".headless/dsh";
 const remoteGoogleCredentialsRelPath = ".config/headless/google-application-credentials.json";
 const remoteGoogleCredentialsPath = `${remoteHome}/${remoteGoogleCredentialsRelPath}`;
 const localTarCommand = process.platform === "win32" ? "tar" : "/usr/bin/tar";
@@ -249,7 +250,7 @@ export async function executeModalAgent(options: ExecuteModalOptions): Promise<E
   const resultDir = mkdtempSync(join(tmpdir(), "headless-modal-result-"));
 
   try {
-    const seedArchive = await createAgentSeedArchive(options.agent, options.env, options.profile);
+    const seedArchive = await createAgentSeedArchive(options.agent, options.env, options.profile, options.command.args);
     const credentialArchive = await createCredentialSeedArchive(
       options.env,
       options.command.env,
@@ -303,9 +304,10 @@ export async function executeModalAgent(options: ExecuteModalOptions): Promise<E
       }
       const masked = Object.entries(overrides).filter(([, value]) => value === undefined).map(([name]) => name);
       for (const name of masked) delete attemptEnvironment[name];
+      const args = modalAgentArgs(options.agent, command.args);
       const native = masked.length
-        ? ["env", ...masked.flatMap((name) => ["-u", name]), "--", command.command, ...command.args]
-        : [command.command, ...command.args];
+        ? ["env", ...masked.flatMap((name) => ["-u", name]), "--", command.command, ...args]
+        : [command.command, ...args];
       const setup = initialized ? 'exec runuser -u node -- "$@"' : bootstrapScript;
       initialized = true;
       const runProcess = await sandbox!.exec(
@@ -375,9 +377,14 @@ async function createWorkspaceArchive(workDir: string, includeGit: boolean): Pro
   return await runLocalTar(workDir, selected);
 }
 
-async function createAgentSeedArchive(agent: AgentName, env: Env, profile?: string): Promise<Uint8Array> {
+async function createAgentSeedArchive(
+  agent: AgentName,
+  env: Env,
+  profile?: string,
+  commandArgs: string[] = [],
+): Promise<Uint8Array> {
   const home = env.HOME;
-  if (!home && !(agent === "codex" && env.CODEX_HOME)) {
+  if (!home && !(agent === "codex" && env.CODEX_HOME) && agent !== "dsh") {
     return new Uint8Array();
   }
   const paths: string[] = [];
@@ -392,7 +399,7 @@ async function createAgentSeedArchive(agent: AgentName, env: Env, profile?: stri
       break;
     }
   }
-  const generatedFiles = collectGeneratedSeedFiles(agent, env, paths, profile);
+  const generatedFiles = collectGeneratedSeedFiles(agent, env, paths, profile, commandArgs);
   if (generatedFiles.length === 0) {
     return paths.length > 0 ? await runLocalTar(home as string, paths) : new Uint8Array();
   }
@@ -540,7 +547,14 @@ function collectGeneratedSeedFiles(
   env: Env,
   selectedPaths: string[],
   profile?: string,
+  commandArgs: string[] = [],
 ): GeneratedSeedFile[] {
+  if (agent === "dsh") {
+    const path = dshPatchPath(commandArgs);
+    return path && existsSync(path)
+      ? [{ content: readFileSync(path, "utf8"), mode: 0o644, relPath: join(dshRemotePatchDir, basename(path)) }]
+      : [];
+  }
   if (agent === "codex") {
     const baseFiles = env.CODEX_HOME ? readCodexBaseFiles(env) : [];
     const profileFiles = profile
@@ -555,6 +569,15 @@ function collectGeneratedSeedFiles(
   if (agent !== "claude" || !env.HOME || selectedPaths.includes(".claude/.credentials.json")) return [];
   const content = readClaudeKeychainCredentials(env);
   return content ? [{ content, mode: 0o600, relPath: ".claude/.credentials.json" }] : [];
+}
+
+// The host patch path can sit under a home the sandbox user cannot read, so the
+// seeded copy under the remote home is passed instead, as Codex rewrites its catalog path.
+function modalAgentArgs(agent: AgentName, args: string[]): string[] {
+  const path = agent === "dsh" ? dshPatchPath(args) : undefined;
+  if (!path) return args;
+  const remotePath = join(remoteHome, dshRemotePatchDir, basename(path));
+  return args.map((arg) => (arg === path ? remotePath : arg));
 }
 
 function readClaudeKeychainCredentials(env: Env): string | undefined {

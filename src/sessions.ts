@@ -146,7 +146,7 @@ function readSecureSessionStore(path: string): SessionStoreFile {
 function normalizeSessionStore(value: unknown): SessionStoreFile {
   if (!isRecord(value) || value.version !== 1 || !isRecord(value.agents)) return emptyStore();
   const store = emptyStore();
-  for (const agent of ["acp", "antigravity", "claude", "codex", "cursor", "gemini", "opencode", "pi"] as const) {
+  for (const agent of ["acp", "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "opencode", "pi"] as const) {
     const sessions = value.agents[agent];
     if (!isRecord(sessions)) continue;
     const normalizedSessions = Object.create(null) as Record<string, StoredSession>;

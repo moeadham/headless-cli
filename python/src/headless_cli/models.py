@@ -8,6 +8,7 @@ Agent = Literal[
     "claude",
     "codex",
     "cursor",
+    "dsh",
     "gemini",
     "opencode",
     "pi",

@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { getAgentConfig } from "./agents.js";
+import { dshPatchPath, getAgentConfig } from "./agents.js";
 import { readCodexBaseFiles, readCodexProfileFiles } from "./codex-profile.js";
 import { collectForwardedEnvEntries, type ForwardedEnvEntry } from "./env.js";
 import { quoteArg } from "./shell.js";
@@ -36,6 +36,7 @@ const dockerSessionAgentHomeVariables = {
   claude: ["CLAUDE_CONFIG_DIR"],
   codex: ["CODEX_HOME"],
   cursor: ["CURSOR_HOME"],
+  dsh: ["DSH_HOME"],
   gemini: ["GEMINI_HOME"],
   opencode: ["OPENCODE_DATA_HOME"],
   pi: ["PI_CODING_AGENT_HOME"],
@@ -345,7 +346,7 @@ export function buildDockerAgentCommand(options: DockerAgentCommandOptions): Bui
     const containerRunDir = `/headless-runs/${options.runId}`;
     args.push("--volume", `${options.runDirHost}:${containerRunDir}`, "--env", `HEADLESS_RUN_DIR=${containerRunDir}`);
   }
-  args.push(...agentConfigMountArgs(options.agent, options.env, options.profile));
+  args.push(...agentConfigMountArgs(options.agent, options.env, options.profile, options.command.args));
   args.push(...credentialMountArgs(options.env, dockerEnvEntries, workDir));
   args.push(...dockerEnvArgs(dockerEnvEntries));
   args.push(...options.dockerArgs);
@@ -433,7 +434,12 @@ function bootstrapScript(
   return commands.join("; ");
 }
 
-function agentConfigMountArgs(agent: AgentName, env: Env, profile?: string): string[] {
+function agentConfigMountArgs(agent: AgentName, env: Env, profile?: string, commandArgs: string[] = []): string[] {
+  const dshPatch = agent === "dsh" ? dshPatchPath(commandArgs) : undefined;
+  if (dshPatch && existsSync(dshPatch)) {
+    // The patch path is absolute, so it mounts at the same path, like a Codex model catalog.
+    return ["--volume", `${dshPatch}:${dshPatch}:ro`];
+  }
   const home = env.HOME;
   if (!home && !(agent === "codex" && env.CODEX_HOME)) {
     return [];

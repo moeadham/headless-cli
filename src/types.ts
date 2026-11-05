@@ -1,4 +1,4 @@
-export type AgentName = "acp" | "antigravity" | "claude" | "codex" | "cursor" | "gemini" | "opencode" | "pi";
+export type AgentName = "acp" | "antigravity" | "claude" | "codex" | "cursor" | "dsh" | "gemini" | "opencode" | "pi";
 
 export type PromptFileMode = "argument" | "stdin";
 

@@ -262,6 +262,7 @@ function formatErrorRecord(record: JsonRecord): string {
 }
 
 export function extractAgentError(agent: AgentName, stdout: string): string {
+  if (agent === "dsh") return stdout.trim() ? extractDshFailure(stdout) : "";
   const records = parseJsonValues(stdout).flatMap(flattenRecords);
   for (const record of records) {
     const rowType = asString(record.type).trim().toLowerCase();
@@ -273,6 +274,24 @@ export function extractAgentError(agent: AgentName, stdout: string): string {
     if (error) return `${agent} error: ${error}`;
   }
   return "";
+}
+
+// DSH closes every run with a `final` event whose reason is the durable turn outcome.
+// Only top-level event types count: tool output and assistant prose stay inert.
+function dshEvents(stdout: string, type: string): JsonRecord[] {
+  return parseJsonValues(stdout).flatMap(flattenRecords).filter((record) => asString(record.type) === type);
+}
+
+function extractDshFailure(stdout: string): string {
+  const error = dshEvents(stdout, "error").at(-1);
+  if (error) return `dsh error: ${asString(error.message).trim() || "native invocation failed"}`;
+  const final = dshEvents(stdout, "final").at(-1);
+  if (!final) return "dsh error: native invocation ended without a final event";
+  const reason = asRecord(final.reason);
+  const kind = asString(reason.kind).trim();
+  if (kind === "completed") return "";
+  const detail = formatErrorRecord(reason);
+  return `dsh error: run ended with reason ${kind || "unknown"}${detail && detail !== kind ? `: ${detail}` : ""}`;
 }
 
 function extractGeminiDeltaMessage(values: unknown[]): string {
@@ -352,6 +371,7 @@ export function extractFinalMessage(agent: AgentName, stdout: string): string {
     return extractAntigravityFinalMessage(stdout);
   }
 
+  if (agent === "dsh") return asString(dshEvents(stdout, "final").at(-1)?.text).trim();
   const values = parseJsonValues(stdout);
   if (agent === "gemini") {
     const deltaMessage = extractGeminiDeltaMessage(values);

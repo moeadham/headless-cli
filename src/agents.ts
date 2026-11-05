@@ -9,16 +9,19 @@ import type {
   ReasoningEffort,
   WaitTier,
 } from "./types.js";
-import { accessSync, constants } from "node:fs";
-import { delimiter, join } from "node:path";
+import { createHash } from "node:crypto";
+import { accessSync, constants, mkdirSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { delimiter, dirname, join } from "node:path";
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
 import { BUILTIN_AGENT_DEFAULTS } from "./config.js";
 import { validateCodexProfileName } from "./codex-profile.js";
 
-const agentOrder: AgentName[] = ["acp", "antigravity", "claude", "codex", "cursor", "gemini", "opencode", "pi"];
+const agentOrder: AgentName[] = ["acp", "antigravity", "claude", "codex", "cursor", "dsh", "gemini", "opencode", "pi"];
 const defaultClaudeModel = BUILTIN_AGENT_DEFAULTS.claude.model;
 const defaultCodexModel = BUILTIN_AGENT_DEFAULTS.codex.model;
 export const DEFAULT_CURSOR_MODEL = BUILTIN_AGENT_DEFAULTS.cursor.model ?? "gpt-5.5";
+export const DEFAULT_DSH_MODEL = BUILTIN_AGENT_DEFAULTS.dsh.model ?? "deepseek-flash";
 export const DEFAULT_GEMINI_MODEL = BUILTIN_AGENT_DEFAULTS.gemini.model ?? "gemini-3.1-pro-preview";
 export const DEFAULT_OPENCODE_MODEL = BUILTIN_AGENT_DEFAULTS.opencode.model ?? "openai/gpt-5.4";
 export const DEFAULT_PI_MODEL = BUILTIN_AGENT_DEFAULTS.pi.model ?? "openai-codex/gpt-5.5";
@@ -471,6 +474,73 @@ export function buildInteractiveOpencodeRun(options: BuildOptions): BuiltCommand
   return commandWithOptionalEnv("opencode", args, opencodeEnv(options.allow));
 }
 
+export function dshCommand(env: Env): string {
+  return env.DSH_BIN || "dsh";
+}
+
+// dsh has no model flags, so routing travels as a `--patch` overlay file.
+// A patch row replaces its config, so the provider is always restated.
+function dshPatch(options: BuildOptions, env: Env): string {
+  const lines = [
+    "- id: agent-default-model",
+    "  config:",
+    '    provider: "deepseek-official"',
+    `    model: ${JSON.stringify(options.model ?? DEFAULT_DSH_MODEL)}`,
+  ];
+  if (options.reasoningEffort) lines.push(`    reasoningEffort: ${JSON.stringify(options.reasoningEffort)}`);
+  if (env.HEADLESS_DSH_UPLOAD !== "1") lines.push("- id: session-log-deepseek", "  disabled: true");
+  return `${lines.join("\n")}\n`;
+}
+
+// Content-addressed so concurrent and detached runs share one file with no cleanup.
+export function dshPatchFile(options: BuildOptions, env: Env): { path: string; content: string } {
+  const content = dshPatch(options, env);
+  const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
+  const root = env.HOME ? join(env.HOME, ".headless", "dsh") : join(tmpdir(), "headless-dsh");
+  return { path: join(root, `overlay-${hash}.yml`), content };
+}
+
+// Written before launch; Docker mounts it and Modal seeds it, as with Codex profile files.
+// It holds no secrets, so it stays readable by a container user whose uid differs.
+export function writeDshPatchFile(options: BuildOptions, env: Env): void {
+  const patch = dshPatchFile(options, env);
+  mkdirSync(dirname(patch.path), { recursive: true, mode: 0o700 });
+  writeFileSync(patch.path, patch.content, { mode: 0o644 });
+}
+
+export function dshPatchPath(args: string[]): string | undefined {
+  const index = args.indexOf("--patch");
+  return index >= 0 ? args[index + 1] : undefined;
+}
+
+function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
+  const patch = dshPatchFile(options, env);
+  const args = [
+    "--profile",
+    "headless",
+    "--patch",
+    patch.path,
+    "--json",
+    "--permission-mode",
+    options.allow === "read-only" ? "read-only" : "danger-full-access",
+    "--approval-policy",
+    "never",
+  ];
+  if (options.sessionMode === "resume" && options.sessionId) {
+    args.push("--session-id", options.sessionId);
+  }
+  args.push("-");
+  const commandEnv = env.HEADLESS_DSH_UPLOAD === "1" ? undefined : { DSH_TELEMETRY_DISABLED: "1" };
+  return {
+    ...commandWithOptionalEnv(dshCommand(env), args, commandEnv),
+    ...(options.promptFile ? { stdinFile: options.promptFile } : { stdinText: options.prompt }),
+  };
+}
+
+function buildInteractiveDsh(): BuiltCommand {
+  throw new Error("--tmux is not supported by dsh: it ships no terminal UI; use --session or --coordination session");
+}
+
 function buildPi(options: BuildOptions, env: Env): BuiltCommand {
   const command = env.PI_CODING_AGENT_BIN || "pi";
   const args = options.sessionMode ? ["--mode", "json"] : ["--no-session", "--mode", "json"];
@@ -592,6 +662,15 @@ const harnesses: Record<AgentName, AgentHarness> = {
     buildCommand: buildCursor,
     buildInteractiveCommand: buildInteractiveCursor,
   },
+  dsh: {
+    name: "dsh",
+    promptFileMode: "stdin",
+    configRelDir: ".dsh",
+    workspaceConfigRelDir: ".dsh",
+    seedPaths: [],
+    buildCommand: buildDsh,
+    buildInteractiveCommand: buildInteractiveDsh,
+  },
   gemini: {
     name: "gemini",
     promptFileMode: "stdin",
@@ -691,6 +770,7 @@ const waitTiers: Record<AgentName, WaitTier> = {
   pi: "dir", // --session-dir <unique dir>
   codex: "claim", // no caller-assignable id; claim the new transcript under a launch lock
   acp: "claim", // generic ACP harness has no shared id mechanism
+  dsh: "unsupported", // no terminal UI to wait on
 };
 
 export function waitTierForAgent(name: AgentName): WaitTier {

@@ -42,6 +42,7 @@ export const BUILTIN_AGENT_DEFAULTS: Record<AgentName, AgentDefaults> = {
   claude: { model: "claude-opus-4-6" },
   codex: { model: "gpt-5.5" },
   cursor: { model: "gpt-5.5", reasoningEffort: "medium" },
+  dsh: { model: "deepseek-flash" },
   gemini: { model: "gemini-3.1-pro-preview" },
   opencode: { model: "openai/gpt-5.4" },
   pi: { model: "openai-codex/gpt-5.5" },
