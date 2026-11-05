@@ -15,10 +15,9 @@ import { spawnSync } from "node:child_process";
 import { createHash } from "node:crypto";
 import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
 
-import { getAgentConfig } from "./agents.js";
+import { dshPatchPath, getAgentConfig } from "./agents.js";
 import { readCodexBaseFiles, readCodexProfileFiles } from "./codex-profile.js";
 import { collectForwardedEnvEntries, type ForwardedEnvEntry } from "./env.js";
-import { sandboxGeneratedFiles } from "./generated-files.js";
 import { quoteArg } from "./shell.js";
 import type { AgentName, BuiltCommand, Env } from "./types.js";
 
@@ -347,10 +346,8 @@ export function buildDockerAgentCommand(options: DockerAgentCommandOptions): Bui
     const containerRunDir = `/headless-runs/${options.runId}`;
     args.push("--volume", `${options.runDirHost}:${containerRunDir}`, "--env", `HEADLESS_RUN_DIR=${containerRunDir}`);
   }
-  args.push(...agentConfigMountArgs(options.agent, options.env, options.profile));
+  args.push(...agentConfigMountArgs(options.agent, options.env, options.profile, options.command.args));
   args.push(...credentialMountArgs(options.env, dockerEnvEntries, workDir));
-  const generated = sandboxGeneratedFiles(options.command);
-  for (const file of generated.files) args.push("--volume", `${file.hostPath}:${file.path}:ro`);
   args.push(...dockerEnvArgs(dockerEnvEntries));
   args.push(...options.dockerArgs);
   const maskedEnvNames = Object.entries(options.command.env ?? {})
@@ -362,12 +359,10 @@ export function buildDockerAgentCommand(options: DockerAgentCommandOptions): Bui
     bootstrapScript(options.agent, Boolean(persistentHome), options.sessionBootstrap, options.profile, maskedEnvNames),
     "headless-agent",
     options.command.command,
-    ...generated.args,
+    ...options.command.args,
   );
 
   const dockerCommand: BuiltCommand = { command: "docker", args };
-  // The host executor writes generated files before Docker mounts them.
-  if (options.command.generatedFiles) dockerCommand.generatedFiles = options.command.generatedFiles;
   if (options.command.env) {
     dockerCommand.env = options.command.env;
   }
@@ -439,7 +434,12 @@ function bootstrapScript(
   return commands.join("; ");
 }
 
-function agentConfigMountArgs(agent: AgentName, env: Env, profile?: string): string[] {
+function agentConfigMountArgs(agent: AgentName, env: Env, profile?: string, commandArgs: string[] = []): string[] {
+  const dshPatch = agent === "dsh" ? dshPatchPath(commandArgs) : undefined;
+  if (dshPatch && existsSync(dshPatch)) {
+    // The patch path is absolute, so it mounts at the same path, like a Codex model catalog.
+    return ["--volume", `${dshPatch}:${dshPatch}:ro`];
+  }
   const home = env.HOME;
   if (!home && !(agent === "codex" && env.CODEX_HOME)) {
     return [];

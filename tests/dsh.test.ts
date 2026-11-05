@@ -3,10 +3,9 @@ import { mkdtempSync, readFileSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
-import { buildAgentCommand, buildInteractiveAgentCommand, waitTierForAgent } from "../src/agents.ts";
+import { buildAgentCommand, buildInteractiveAgentCommand, dshPatchFile, waitTierForAgent, writeDshPatchFile } from "../src/agents.ts";
 import { runCli } from "../src/cli.ts";
 import { buildDockerAgentCommand } from "../src/docker.ts";
-import { sandboxGeneratedFiles } from "../src/generated-files.ts";
 import { compactOversizedTraceLine } from "../src/relevant-trace.ts";
 import { extractAgentError, extractFinalMessage, extractNativeSessionId, extractUsageSummary } from "../src/output.ts";
 
@@ -23,7 +22,7 @@ const trace = [
 
 test("builds a one-shot dsh command with a patch file and the task on stdin", () => {
   const built = buildAgentCommand("dsh", { prompt: "hello", allow: "read-only" }, { HOME: "/home/u", DSH_BIN: "/opt/dsh" });
-  const patch = built.generatedFiles?.[0];
+  const patch = dshPatchFile({ prompt: "hello", allow: "read-only" }, { HOME: "/home/u" });
   assert.equal(built.command, "/opt/dsh");
   assert.match(patch?.path ?? "", /^\/home\/u\/\.headless\/dsh\/overlay-[0-9a-f]{16}\.yml$/);
   assert.deepEqual(built.args, [
@@ -46,13 +45,13 @@ test("dsh yolo is the default and resume passes the native session id", () => {
 });
 
 test("dsh patch carries model and effort", () => {
-  const built = buildAgentCommand("dsh", { prompt: "x", model: "deepseek-v4-pro", reasoningEffort: "high" }, { HOME: "/h" });
-  assert.match(built.generatedFiles?.[0]?.content ?? "", /model: "deepseek-v4-pro"\n {4}reasoningEffort: "high"\n/);
+  const patch = dshPatchFile({ prompt: "x", model: "deepseek-v4-pro", reasoningEffort: "high" }, { HOME: "/h" });
+  assert.match(patch.content, /model: "deepseek-v4-pro"\n {4}reasoningEffort: "high"\n/);
 });
 
 test("HEADLESS_DSH_UPLOAD keeps DSH upload defaults", () => {
   const built = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/h", HEADLESS_DSH_UPLOAD: "1" });
-  assert.doesNotMatch(built.generatedFiles?.[0]?.content ?? "", /session-log-deepseek/);
+  assert.doesNotMatch(dshPatchFile({ prompt: "x" }, { HOME: "/h", HEADLESS_DSH_UPLOAD: "1" }).content, /session-log-deepseek/);
   assert.equal(built.env, undefined);
 });
 
@@ -90,27 +89,18 @@ test("oversized dsh final keeps its outcome", () => {
   assert.equal(extractAgentError("dsh", compactOversizedTraceLine("dsh", big)), "");
 });
 
-test("sandboxes see generated files under /tmp, not the host home", () => {
-  const command = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/root" });
-  const hostPath = command.generatedFiles?.[0]?.path ?? "";
-  const sandbox = sandboxGeneratedFiles(command);
-  const path = sandbox.files[0]?.path ?? "";
-  assert.match(path, /^\/tmp\/headless-generated\/overlay-[0-9a-f]{16}\.yml$/);
-  assert.equal(sandbox.files[0]?.hostPath, hostPath);
-  assert.equal(sandbox.args[sandbox.args.indexOf("--patch") + 1], path);
-  assert.equal(sandbox.args.includes(hostPath), false);
-});
-
-test("Docker mounts the dsh patch at the sandbox path", () => {
-  const command = buildAgentCommand("dsh", { prompt: "x" }, { HOME: "/root" });
+test("Docker mounts the dsh patch at its host path", () => {
+  const home = mkdtempSync(join(tmpdir(), "dsh-docker-"));
+  const options = { prompt: "x" };
+  writeDshPatchFile(options, { HOME: home });
+  const command = buildAgentCommand("dsh", options, { HOME: home });
+  const path = dshPatchFile(options, { HOME: home }).path;
   const docker = buildDockerAgentCommand({
-    agent: "dsh", command, dockerArgs: [], dockerEnv: [], env: { HOME: "/h", DEEPSEEK_API_KEY: "k" },
+    agent: "dsh", command, dockerArgs: [], dockerEnv: [], env: { HOME: home, DEEPSEEK_API_KEY: "k" },
     image: "image", workDir: tmpdir(),
   });
-  const { files: [file] } = sandboxGeneratedFiles(command);
-  assert.ok(docker.args.includes(`${file?.hostPath}:${file?.path}:ro`));
-  assert.equal(docker.args[docker.args.indexOf("--patch") + 1], file?.path);
-  assert.deepEqual(docker.generatedFiles, command.generatedFiles);
+  assert.ok(docker.args.includes(`${path}:${path}:ro`));
+  assert.equal(docker.args[docker.args.indexOf("--patch") + 1], path);
   assert.ok(docker.args.includes("DEEPSEEK_API_KEY"));
 });
 

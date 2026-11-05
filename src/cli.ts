@@ -19,7 +19,6 @@ import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { constants as osConstants, tmpdir } from "node:os";
 import { fileURLToPath } from "node:url";
-import { writeGeneratedFiles } from "./generated-files.js";
 import { PiCompletionObserver } from "./pi-completion.js";
 
 import {
@@ -27,6 +26,7 @@ import {
   buildInteractiveOpencodeRun,
   buildInteractiveAgentCommand,
   DEFAULT_DSH_MODEL,
+  writeDshPatchFile,
   DEFAULT_GEMINI_MODEL,
   DEFAULT_OPENCODE_MODEL,
   DEFAULT_PI_MODEL,
@@ -1772,7 +1772,6 @@ async function executeCommand(
   stderr: (text: string) => void,
   options: ExecuteCommandOptions,
 ): Promise<ExecuteResult> {
-  writeGeneratedFiles(command);
   let stdinFd: number | undefined;
   const stdio: ["ignore" | "pipe" | number, "pipe", "pipe"] = [
     command.stdinText !== undefined ? "pipe" : "ignore",
@@ -3352,27 +3351,21 @@ async function executeStoredNode(
           "local",
         )
       : undefined;
-  const command = withRunEnvironment(
-    buildAgentCommand(
-      node.agent,
-      applySessionPlan(
-        {
-          prompt,
-          workDir: node.workDir,
-          model: defaults.model,
-          profile: node.profile,
-          allow,
-          fast: node.fast,
-          reasoningEffort: defaults.reasoningEffort,
-          timeoutSeconds: config.general.timeoutSeconds,
-        },
-        sessionPlan,
-      ),
-      env,
-    ),
-    node.runId,
-    node.nodeId,
+  const buildOptions = applySessionPlan(
+    {
+      prompt,
+      workDir: node.workDir,
+      model: defaults.model,
+      profile: node.profile,
+      allow,
+      fast: node.fast,
+      reasoningEffort: defaults.reasoningEffort,
+      timeoutSeconds: config.general.timeoutSeconds,
+    },
+    sessionPlan,
   );
+  const command = withRunEnvironment(buildAgentCommand(node.agent, buildOptions, env), node.runId, node.nodeId);
+  if (node.agent === "dsh") writeDshPatchFile(buildOptions, env);
   appendRunInvocationLog(env, node.runId, node.nodeId, "run message");
   const result = await executeCommand(node.agent, command, node.workDir, env, stderr, {
     stdout,
@@ -4508,6 +4501,7 @@ export async function runCli(argv: string[], deps: CliDeps = {}): Promise<number
       return built;
     };
     let command = buildAttemptCommand(initialBilling.env, nativeOptions);
+    if (parsed.agent === "dsh" && !parsed.printCommand) writeDshPatchFile(nativeOptions, initialBilling.env);
     const reasoningWarning = unsupportedReasoningEffortWarning(parsed.agent, configuredDefaults.reasoningEffort, "headless");
     if (reasoningWarning) stderr(reasoningWarning);
 

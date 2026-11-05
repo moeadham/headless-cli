@@ -6,14 +6,13 @@ import type {
   BuildOptions,
   BuiltCommand,
   Env,
-  GeneratedFile,
   ReasoningEffort,
   WaitTier,
 } from "./types.js";
 import { createHash } from "node:crypto";
-import { accessSync, constants } from "node:fs";
+import { accessSync, constants, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { delimiter, join } from "node:path";
+import { delimiter, dirname, join } from "node:path";
 import { commandFromCustom, resolveAcpCommand } from "./acp.js";
 import { BUILTIN_AGENT_DEFAULTS } from "./config.js";
 import { validateCodexProfileName } from "./codex-profile.js";
@@ -494,11 +493,24 @@ function dshPatch(options: BuildOptions, env: Env): string {
 }
 
 // Content-addressed so concurrent and detached runs share one file with no cleanup.
-function dshPatchFile(options: BuildOptions, env: Env): GeneratedFile {
+export function dshPatchFile(options: BuildOptions, env: Env): { path: string; content: string } {
   const content = dshPatch(options, env);
   const hash = createHash("sha256").update(content).digest("hex").slice(0, 16);
   const root = env.HOME ? join(env.HOME, ".headless", "dsh") : join(tmpdir(), "headless-dsh");
   return { path: join(root, `overlay-${hash}.yml`), content };
+}
+
+// Written before launch; Docker mounts it and Modal seeds it, as with Codex profile files.
+// It holds no secrets, so it stays readable by a container user whose uid differs.
+export function writeDshPatchFile(options: BuildOptions, env: Env): void {
+  const patch = dshPatchFile(options, env);
+  mkdirSync(dirname(patch.path), { recursive: true, mode: 0o700 });
+  writeFileSync(patch.path, patch.content, { mode: 0o644 });
+}
+
+export function dshPatchPath(args: string[]): string | undefined {
+  const index = args.indexOf("--patch");
+  return index >= 0 ? args[index + 1] : undefined;
 }
 
 function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
@@ -521,7 +533,6 @@ function buildDsh(options: BuildOptions, env: Env): BuiltCommand {
   const commandEnv = env.HEADLESS_DSH_UPLOAD === "1" ? undefined : { DSH_TELEMETRY_DISABLED: "1" };
   return {
     ...commandWithOptionalEnv(dshCommand(env), args, commandEnv),
-    generatedFiles: [patch],
     ...(options.promptFile ? { stdinFile: options.promptFile } : { stdinText: options.prompt }),
   };
 }
